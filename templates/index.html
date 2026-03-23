@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OLED器件例专利生成器</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ══ 顶栏 ══════════════════════════════════════════════════════ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo">OLED</div>
+      <div>
+        <div class="app-title">器件例专利文本生成器</div>
+        <div class="app-sub">DEVICE EXAMPLE AUTO-GENERATOR · v2.0</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn-tab active" id="tabManual"  onclick="switchTab('manual')">手动输入</button>
+      <button class="btn-tab"        id="tabBatch"   onclick="switchTab('batch')">CSV批量</button>
+      <button class="btn-icon"       id="btnSettings" onclick="toggleSettings()" title="LLM设置">⚙</button>
+    </div>
+  </header>
+
+  <!-- ══ LLM 设置抽屉 ══════════════════════════════════════════════ -->
+  <div class="settings-drawer" id="settingsDrawer">
+    <div class="drawer-inner">
+      <div class="drawer-title">
+        <span>LLM 配置</span>
+        <button class="btn-icon-sm" onclick="toggleSettings()">✕</button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">生成模式</div>
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="modeTemplate"
+            onclick="setMode('template')" title="仅用规则模板，不调用任何API，最快">
+            模板引擎
+          </button>
+          <button class="toggle-btn" id="modePolish"
+            onclick="setMode('template_polish')" title="模板生成草稿后，由LLM润色">
+            模板+润色
+          </button>
+          <button class="toggle-btn" id="modeDirect"
+            onclick="setMode('llm_direct')" title="LLM根据数据直接撰写全文">
+            LLM直写
+          </button>
+        </div>
+      </div>
+
+      <div id="llmFields" style="display:none;">
+      <div class="setting-row">
+          <div class="setting-label">模型提供商</div>
+          <select id="selProvider" onchange="onProviderChange()">
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="qwen">通义千问 (Qwen)</option>
+            <option value="deepseek">Deepseek</option>
+            <option value="huggingface">🤗 HuggingFace 本地</option>
+          </select>
+        </div>
+
+        <!-- API 模型选择（非HF） -->
+        <div id="apiModelRow" class="setting-row">
+          <div class="setting-label">模型</div>
+          <select id="selModel"></select>
+        </div>
+
+        <!-- API Key（非HF） -->
+        <div id="apiKeyRow" class="setting-row">
+          <div class="setting-label">API Key</div>
+          <div class="key-row">
+            <input type="password" id="inputApiKey" placeholder="sk-..." autocomplete="off">
+            <button class="btn-sm" onclick="validateKey()">验证</button>
+            <button class="btn-sm" onclick="saveKeyToEnv()">保存到.env</button>
+          </div>
+          <div class="key-hint" id="keyHint"></div>
+        </div>
+
+        <!-- HuggingFace 专属配置 -->
+        <div id="hfPanel" style="display:none;">
+          <div class="hf-panel">
+            <div class="setting-row">
+              <div class="setting-label">模型 ID (HF Hub)</div>
+              <input type="text" id="hfModelId" placeholder="如 Qwen/Qwen2.5-7B-Instruct"
+                     oninput="updateHfModel()">
+              <div class="key-hint">输入后点击"检查/下载"</div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">推荐模型</div>
+              <div id="hfRecommended" class="hf-model-list">加载中…</div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">权重缓存目录</div>
+              <input type="text" id="hfCacheDir" placeholder="留空使用默认 ~/.cache/huggingface">
+              <div class="key-hint">首次下载权重将存至此目录</div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">HF Token（门控模型需要）</div>
+              <input type="password" id="hfToken" placeholder="hf_xxx...">
+              <div class="key-hint">hf.co → Settings → Access Tokens</div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">推理设备 / 精度</div>
+              <div class="two-col">
+                <select id="hfDevice">
+                  <option value="auto">auto（自动选择）</option>
+                  <option value="cuda">cuda（NVIDIA GPU）</option>
+                  <option value="cpu">cpu</option>
+                  <option value="mps">mps（Apple M 系列）</option>
+                </select>
+                <select id="hfDtype">
+                  <option value="auto">auto</option>
+                  <option value="bfloat16">bfloat16（推荐）</option>
+                  <option value="float16">float16</option>
+                  <option value="float32">float32（慢）</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">量化（需 bitsandbytes）</div>
+              <div style="display:flex;gap:12px;">
+                <label class="chk-item">
+                  <input type="checkbox" id="hf4bit">
+                  <span>4-bit（显存最省）</span>
+                </label>
+                <label class="chk-item">
+                  <input type="checkbox" id="hf8bit">
+                  <span>8-bit（平衡）</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="hf-actions">
+              <button class="btn-sm" onclick="hfCheckCache()">🔍 检查本地缓存</button>
+              <button class="btn-sm" onclick="hfLoadModel()">⬇ 下载/加载模型</button>
+              <button class="btn-sm danger" onclick="hfUnloadModel()">🗑 卸载模型</button>
+            </div>
+            <div class="hf-status" id="hfStatus"></div>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">温度 / Max Tokens</div>
+          <div class="two-col">
+            <input type="number" id="inputTemp"   value="0.3" min="0" max="1" step="0.1">
+            <input type="number" id="inputTokens" value="2048" min="128" max="16384" step="256">
+          </div>
+        </div>
+
+        <div class="key-status" id="keyStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 主内容区 ══════════════════════════════════════════════════ -->
+  <div class="main-content">
+
+    <!-- ── 手动输入 ────────────────────────────────────────────── -->
+    <div id="paneManual" class="pane-layout">
+      <div class="left-col">
+
+        <!-- 器件基本信息 -->
+        <div class="card">
+          <div class="card-hdr">器件基本信息</div>
+          <div class="card-body">
+            <div class="frow2">
+              <div class="fg"><div class="fl">实施例编号</div>
+                <input type="text" id="deviceNo" value="实施例1"></div>
+              <div class="fg"><div class="fl">器件类型</div>
+                <select id="deviceType">
+                  <option value="bottom">底发射型</option>
+                  <option value="top">顶发射型</option>
+                </select></div>
+            </div>
+            <div class="frow3">
+              <div class="fg"><div class="fl">基板</div>
+                <input type="text" id="substrate" value="玻璃基板"></div>
+              <div class="fg"><div class="fl">阳极</div>
+                <input type="text" id="anode" value="ITO"></div>
+              <div class="fg"><div class="fl">阳极厚度(nm)</div>
+                <input type="number" id="anodeTHK" placeholder="150"></div>
+            </div>
+            <div class="frow3">
+              <div class="fg"><div class="fl">阴极材料</div>
+                <input type="text" id="cathode" value="Al"></div>
+              <div class="fg"><div class="fl">阴极厚度(nm)</div>
+                <input type="text" id="cathodeTHK" placeholder="待补充"></div>
+              <div class="fg"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 功能层 -->
+        <div class="card">
+          <div class="card-hdr">功能层材料 <span class="card-hint">阳极→阴极方向</span></div>
+          <div class="card-body">
+            <div id="matCards"></div>
+            <button class="btn-add" onclick="addMat()">＋ 添加功能层</button>
+          </div>
+        </div>
+
+        <!-- 量化参数 -->
+        <div class="card">
+          <div class="card-hdr">发光材料量化参数</div>
+          <div class="card-body">
+            <div class="frow2">
+              <div class="fg"><div class="fl">HOMO (eV)</div>
+                <input type="text" id="homo" placeholder="-5.42"></div>
+              <div class="fg"><div class="fl">LUMO (eV)</div>
+                <input type="text" id="lumo" placeholder="-2.18"></div>
+            </div>
+            <div class="frow3">
+              <div class="fg"><div class="fl">S1 (eV)</div>
+                <input type="text" id="s1" placeholder="2.85" oninput="autoMech()"></div>
+              <div class="fg"><div class="fl">T1 (eV)</div>
+                <input type="text" id="t1" placeholder="2.60" oninput="autoMech()"></div>
+              <div class="fg"><div class="fl">发光机制</div>
+                <div class="mech-tag" id="mechTag">—</div></div>
+            </div>
+            <div class="frow2">
+              <div class="fg"><div class="fl">振子强度 f</div>
+                <input type="text" id="fval" placeholder="0.85"></div>
+              <div class="fg"><div class="fl">偶极矩 (D)</div>
+                <input type="text" id="dipole" placeholder="3.1"></div>
+            </div>
+            <div class="frow2">
+              <div class="fg"><div class="fl">λ_hole (eV)</div>
+                <input type="text" id="lambdaH" placeholder="0.15"></div>
+              <div class="fg"><div class="fl">λ_electron (eV)</div>
+                <input type="text" id="lambdaE" placeholder="0.22"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 性能数据 -->
+        <div class="card">
+          <div class="card-hdr">器件性能数据 <span class="card-hint">留空生成占位符</span></div>
+          <div class="card-body">
+            <div class="frow2">
+              <div class="fg"><div class="fl">Von (V)</div>
+                <input type="text" id="von" placeholder="待补充"></div>
+              <div class="fg"><div class="fl">Vop (V)</div>
+                <input type="text" id="vop" placeholder="待补充"></div>
+            </div>
+            <div class="frow2">
+              <div class="fg"><div class="fl">EQE (%)</div>
+                <input type="text" id="eqe" placeholder="待补充"></div>
+              <div class="fg"><div class="fl">cd/A</div>
+                <input type="text" id="cda" placeholder="待补充"></div>
+            </div>
+            <div class="frow3">
+              <div class="fg"><div class="fl">CIEx</div>
+                <input type="text" id="ciex" placeholder="待补充"></div>
+              <div class="fg"><div class="fl">CIEy</div>
+                <input type="text" id="ciey" placeholder="待补充"></div>
+              <div class="fg"><div class="fl">EL峰值(nm)</div>
+                <input type="text" id="elPeak" placeholder="待补充"></div>
+            </div>
+            <div class="frow2">
+              <div class="fg"><div class="fl">T95 (h)</div>
+                <input type="text" id="t95" placeholder="待补充"></div>
+              <div class="fg"><div class="fl">Lmax (cd/m²)</div>
+                <input type="text" id="lmax" placeholder="待补充"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 段落选择 -->
+        <div class="card">
+          <div class="card-hdr">生成内容</div>
+          <div class="card-body">
+            <div class="chk-grid">
+              <label class="chk-item"><input type="checkbox" id="chk_structure"   checked><span>① 叠层结构</span></label>
+              <label class="chk-item"><input type="checkbox" id="chk_material"    checked><span>② 材料性质</span></label>
+              <label class="chk-item"><input type="checkbox" id="chk_fabrication" checked><span>③ 制备方法</span></label>
+              <label class="chk-item"><input type="checkbox" id="chk_performance" checked><span>④ 性能数据</span></label>
+              <label class="chk-item"><input type="checkbox" id="chk_mechanism"   checked><span>⑤ 发光机制</span></label>
+              <label class="chk-item"><input type="checkbox" id="chk_comparison"  checked><span>⑥ 对比例</span></label>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn-primary" onclick="generateManual()">▶ 生成器件例文本</button>
+      </div>
+
+      <!-- 输出区 -->
+      <div class="right-col">
+        <div class="output-card">
+          <div class="output-toolbar">
+            <div class="output-title">生成结果</div>
+            <div class="output-actions">
+              <span class="mode-badge" id="modeBadge">模板引擎</span>
+              <button class="btn-sm" onclick="copyOut()">复制</button>
+              <button class="btn-sm" onclick="exportTxt()">导出TXT</button>
+              <button class="btn-sm danger" onclick="clearOut()">清空</button>
+            </div>
+          </div>
+          <div class="output-body" id="outputBody">
+            <div class="output-empty">
+              <div class="empty-icon">◈</div>
+              <p>配置参数后点击生成</p>
+              <p class="empty-sub">未填字段将以橙色占位符标注</p>
+            </div>
+          </div>
+          <div class="stats-bar" id="statsBar" style="display:none;">
+            <span>字数 <b id="stWords">0</b></span>
+            <span>段落 <b id="stSecs">0</b></span>
+            <span class="warn">待补充 <b id="stPH">0</b> 处</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CSV 批量 ────────────────────────────────────────────── -->
+    <div id="paneBatch" class="pane-batch" style="display:none;">
+      <div class="card batch-card">
+        <div class="card-hdr">CSV / Excel 批量导入</div>
+        <div class="card-body">
+
+          <div class="batch-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <div class="step-title">下载数据模板</div>
+              <a href="/api/sample_csv" class="btn-download">⬇ 下载CSV模板</a>
+            </div>
+          </div>
+
+          <div class="batch-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <div class="step-title">上传数据文件</div>
+              <div class="upload-zone" id="dropZone"
+                   onclick="document.getElementById('fileInput').click()"
+                   ondragover="event.preventDefault();this.classList.add('drag')"
+                   ondragleave="this.classList.remove('drag')"
+                   ondrop="handleDrop(event)">
+                <div class="upload-icon">📂</div>
+                <div>点击或拖拽上传</div>
+                <div class="upload-hint">.csv / .xlsx · 最大16MB</div>
+              </div>
+              <input type="file" id="fileInput" accept=".csv,.xlsx,.xls"
+                     style="display:none" onchange="handleFile(this)">
+              <div class="file-info" id="fileInfo" style="display:none;"></div>
+            </div>
+          </div>
+
+          <div class="batch-step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+              <div class="step-title">选择段落</div>
+              <div class="chk-grid">
+                <label class="chk-item"><input type="checkbox" id="bc_structure"   checked><span>① 叠层结构</span></label>
+                <label class="chk-item"><input type="checkbox" id="bc_material"    checked><span>② 材料性质</span></label>
+                <label class="chk-item"><input type="checkbox" id="bc_fabrication" checked><span>③ 制备方法</span></label>
+                <label class="chk-item"><input type="checkbox" id="bc_performance" checked><span>④ 性能数据</span></label>
+                <label class="chk-item"><input type="checkbox" id="bc_mechanism"   checked><span>⑤ 发光机制</span></label>
+                <label class="chk-item"><input type="checkbox" id="bc_comparison"  checked><span>⑥ 对比例</span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="batch-step">
+            <div class="step-num">4</div>
+            <div class="step-body">
+              <button class="btn-primary" id="btnBatch" onclick="runBatch()" disabled>▶ 批量生成</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="batchResultCard" style="display:none;">
+        <div class="card-hdr">
+          批量结果 <span class="count-badge" id="batchCount"></span>
+          <button class="btn-sm" style="margin-left:auto;" onclick="exportAllTxt()">导出全部TXT</button>
+        </div>
+        <div id="batchList" class="batch-list"></div>
+      </div>
+    </div>
+
+  </div><!-- /main-content -->
+</div><!-- /app -->
+
+<div id="toast" class="toast" style="display:none;"></div>
+<div id="loadingOverlay" class="loading-overlay" style="display:none;">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loadingText">生成中…</div>
+</div>
+
+<script src="/static/js/state.js"></script>
+<script src="/static/js/ui.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/main.js"></script>
+</body>
+</html>

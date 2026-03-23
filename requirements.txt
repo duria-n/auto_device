@@ -1,0 +1,28 @@
+# Web 框架
+Flask==3.0.3
+flask-cors==4.0.1
+Jinja2==3.1.4
+
+# 数据处理
+pandas==2.2.2
+openpyxl==3.1.4
+
+# 文档导出
+python-docx==1.1.2
+
+# 环境配置
+python-dotenv==1.0.1
+
+# ── API 模型（按需安装）──────────────────────────────────────────────
+openai==1.40.0          # OpenAI / Deepseek（兼容）
+anthropic==0.34.0       # Anthropic Claude
+dashscope==1.20.11      # 通义千问 Qwen
+requests==2.32.3        # ERNIE / 通用 HTTP
+
+# ── HuggingFace 本地推理（按需安装）─────────────────────────────────
+# pip install transformers accelerate torch
+# pip install bitsandbytes      # 4-bit / 8-bit 量化
+# pip install huggingface_hub   # 查询模型信息
+# transformers>=4.40.0
+# accelerate>=0.30.0
+# torch>=2.0.0

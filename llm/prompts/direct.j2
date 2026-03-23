@@ -1,0 +1,135 @@
+{# direct.j2 — LLM 直接撰写模式的 User Prompt #}
+{#
+  上下文变量：
+    recipe       : DeviceRecipe  — 器件配方对象
+    sections     : list[str]     — 要生成的段落列表
+    tadf_threshold: float        — TADF判断阈值，默认0.3
+    ─────────────────────────────────────────────────────
+  recipe 字段（模板中可直接访问）：
+    recipe.device_no   recipe.substrate
+    recipe.anode       recipe.anode_thk
+    recipe.cathode     recipe.cathode_thk
+    recipe.homo        recipe.lumo
+    recipe.s1          recipe.t1
+    recipe.f           recipe.dipole
+    recipe.lambda_hole recipe.lambda_elec
+    recipe.von         recipe.vop    recipe.vth
+    recipe.eqe         recipe.cda
+    recipe.ciex        recipe.ciey   recipe.el_peak
+    recipe.t95         recipe.lmax
+    recipe.materials   — list of MaterialLayer
+  MaterialLayer 字段：
+    .id .name .role .thk .ratio
+    .homo .lumo .s1 .t1 .f .dipole
+    .lambda_hole .lambda_elec .smiles
+#}
+
+请根据以下 OLED 器件配方数据，撰写专利说明书中的器件实施例文本。
+
+━━━━━━━━━━━━ 器件基本信息 ━━━━━━━━━━━━
+
+实施例编号：{{ recipe.device_no }}
+基　　板：{{ recipe.substrate }}
+阳　　极：{{ recipe.anode }}{% if recipe.anode_thk %}，厚度 {{ recipe.anode_thk }} nm{% endif %}
+
+阴　　极：{{ recipe.cathode }}{% if recipe.cathode_thk %}，厚度 {{ recipe.cathode_thk }} nm{% else %}，厚度【待补充:阴极厚度/nm】{% endif %}
+
+━━━━━━━━━━━━ 功能层配置（阳极→阴极）━━━━━━━━━━━━
+
+{% for m in recipe.materials %}
+【{{ loop.index }}】{{ m.id }} — {{ m.name if m.name else "（未命名）" }}
+  · 功能角色：{{ m.role }}
+  · 厚度：{% if m.thk %}{{ m.thk }} nm{% else %}【待补充:{{ m.id }}THK】{% endif %}
+
+{% if m.role in ["host", "emitter"] %}
+  · 掺杂比例：{% if m.ratio %}{{ m.ratio }} wt%{% else %}【待补充:掺杂比例wt%】{% endif %}
+
+{% endif %}
+{% if m.homo %}  · HOMO：{{ m.homo }} eV{% endif %}
+
+{% if m.lumo %}  · LUMO：{{ m.lumo }} eV{% endif %}
+
+{% if m.s1 %}  · S₁：{{ m.s1 }} eV{% endif %}
+
+{% if m.t1 %}  · T₁：{{ m.t1 }} eV{% endif %}
+
+{% if m.s1 and m.t1 %}
+  · ΔE_ST：{{ (m.s1 | float - m.t1 | float) | abs | round(3) }} eV
+    {% set delta = (m.s1 | float - m.t1 | float) | abs %}
+    {% set thresh = tadf_threshold | default(0.3) %}
+    {% if delta < thresh %}→ TADF 材料（ΔE_ST < {{ thresh }} eV）
+    {% else %}→ 传统荧光/磷光材料（ΔE_ST ≥ {{ thresh }} eV）
+    {% endif %}
+{% endif %}
+{% if m.f %}  · 振子强度 f：{{ m.f }}{% endif %}
+
+{% if m.dipole %}  · 偶极矩：{{ m.dipole }} D{% endif %}
+
+{% if m.lambda_hole %}  · λ_hole：{{ m.lambda_hole }} eV{% endif %}
+
+{% if m.lambda_elec %}  · λ_electron：{{ m.lambda_elec }} eV{% endif %}
+
+{% if m.smiles %}  · SMILES：{{ m.smiles }}{% endif %}
+
+{% endfor %}
+
+━━━━━━━━━━━━ 器件性能数据（实测）━━━━━━━━━━━━
+
+{% if recipe.von %}启亮电压 Von：{{ recipe.von }} V（@10⁻⁴ mA/cm²）{% else %}启亮电压 Von：【待补充:Von/V】{% endif %}
+
+{% if recipe.vop %}工作电压 Vop：{{ recipe.vop }} V{% else %}工作电压 Vop：【待补充:Vop/V】{% endif %}
+
+{% if recipe.vth %}阈值电压 Vth：{{ recipe.vth }} V{% else %}阈值电压 Vth：【待补充:Vth/V】{% endif %}
+
+{% if recipe.eqe %}外量子效率 EQEmax：{{ recipe.eqe }} %{% else %}外量子效率 EQEmax：【待补充:EQE/%】{% endif %}
+
+{% if recipe.cda %}电流效率 CE：{{ recipe.cda }} cd/A{% else %}电流效率 CE：【待补充:cd/A】{% endif %}
+
+{% if recipe.ciex and recipe.ciey %}CIE 色坐标：({{ recipe.ciex }}, {{ recipe.ciey }}){% elif recipe.ciey %}CIE 色坐标：(【待补充:CIEx】, {{ recipe.ciey }}){% else %}CIE 色坐标：【待补充:CIEx】，【待补充:CIEy】{% endif %}
+
+{% if recipe.el_peak %}EL 峰值波长：{{ recipe.el_peak }} nm{% else %}EL 峰值波长：【待补充:EL_peak/nm】{% endif %}
+
+{% if recipe.t95 %}寿命 T95：{{ recipe.t95 }} h{% else %}寿命 T95：【待补充:T95/h】{% endif %}
+
+{% if recipe.lmax %}最大亮度 Lmax：{{ recipe.lmax }} cd/m²{% else %}最大亮度 Lmax：【待补充:Lmax/cd/m²】{% endif %}
+
+━━━━━━━━━━━━ 撰写要求 ━━━━━━━━━━━━
+
+请生成以下段落（{{ sections | join("、") }}）：
+
+{% if "structure" in sections %}
+① 器件叠层结构描述
+   - 按阳极→阴极方向，逐层列出材料名称和厚度
+   - 发光层（EML）需注明主体材料和发光体的掺杂关系及比例
+{% endif %}
+{% if "material" in sections %}
+② 各层材料性质描述
+   - 重点描述发光材料的能级（HOMO/LUMO）、激发态（S₁/T₁）、
+     发光机制（TADF/磷光/荧光）、振子强度、偶极矩、重组能
+   - 如 ΔE_ST < {{ tadf_threshold | default(0.3) }} eV，需明确说明 TADF 机制
+{% endif %}
+{% if "fabrication" in sections %}
+③ 器件制备方法描述
+   - 描述基板清洗、ITO 表面处理、真空蒸镀各层的工艺步骤
+   - 蒸镀速率、真空度等工艺参数如无数据则用占位符标注
+{% endif %}
+{% if "performance" in sections %}
+④ 器件性能数据记述
+   - 描述电学特性（Von/Vop/Vth）和光学特性（EQE/CE/CIE/EL峰位/T95）
+   - 缺失数据用【待补充:xxx】标注
+{% endif %}
+{% if "mechanism" in sections %}
+⑤ 发光机制分析说明
+   - 结合 ΔE_ST 数值分析 RISC 效率（TADF 情况）或激子利用率
+   - 结合振子强度 f 分析辐射跃迁效率
+{% endif %}
+{% if "comparison" in sections %}
+⑥ 与对比例效果对比
+   - 设置对比例（替换发光材料），对比 EQE、寿命等关键性能指标
+   - 对比数据缺失时用占位符标注
+{% endif %}
+
+━━━━━━━━━━━━ 注意事项 ━━━━━━━━━━━━
+
+- 所有【待补充:xxx】占位符必须原样保留，禁止替换为任何估算值
+- 直接输出实施例正文，不添加任何前言、解释或后记
