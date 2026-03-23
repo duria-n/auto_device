@@ -49,9 +49,25 @@ def api_validate_key():
 
 @bp.route("/api/save_key", methods=["POST"])
 def api_save_key():
-    """将 API Key 写入 .env 文件（追加或更新）。"""
+    """
+    将 API Key 写入 .env 文件。
+    安全限制：仅允许来自 localhost / 127.0.0.1 的请求，防止远程滥用。
+    """
     import re
     from pathlib import Path
+    from flask import request as req
+
+    # ── 仅允许本机访问 ────────────────────────────────────────────────
+    remote = req.remote_addr or ""
+    allowed = {"127.0.0.1", "::1", "localhost"}
+    # 也接受 X-Forwarded-For 为空（直连）或明确是 127.0.0.1
+    forwarded = req.headers.get("X-Forwarded-For", "").strip()
+    if remote not in allowed and forwarded not in ("", "127.0.0.1"):
+        return jsonify({
+            "success": False,
+            "error": "save_key 仅允许本机（localhost）调用，当前来源被拒绝"
+        }), 403
+
     try:
         body     = request.get_json(force=True)
         provider = body.get("provider", "").lower()
@@ -64,6 +80,7 @@ def api_save_key():
             "anthropic": "ANTHROPIC_API_KEY",
             "qwen":      "QWEN_API_KEY",
             "deepseek":  "DEEPSEEK_API_KEY",
+            "huggingface": "HF_TOKEN",
         }
         env_key = key_map.get(provider)
         if not env_key:
@@ -72,12 +89,10 @@ def api_save_key():
         env_path = Path(__file__).resolve().parent.parent / ".env"
         content  = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
 
-        line = f'{env_key}="{api_key}"'
+        line    = f'{env_key}="{api_key}"'
         pattern = re.compile(rf'^{env_key}=.*$', re.MULTILINE)
-        if pattern.search(content):
-            content = pattern.sub(line, content)
-        else:
-            content = content.rstrip("\n") + f"\n{line}\n"
+        content = pattern.sub(line, content) if pattern.search(content) \
+                  else content.rstrip("\n") + f"\n{line}\n"
 
         env_path.write_text(content, encoding="utf-8")
         return jsonify({"success": True, "key": env_key})

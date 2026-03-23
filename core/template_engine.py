@@ -54,7 +54,7 @@ def _build_structure(r: DeviceRecipe) -> str:
             break
         lines.append(
             f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}：{m.name or ph('材料名称')}，"
-            f"厚度为{val(m.thk, f'{m.name or \"材料\"}THK', ' nm')}；"
+            f"厚度为{val(m.thk, (m.name or '材料') + 'THK', ' nm')}；"
         ); idx += 1
 
     # EML
@@ -78,7 +78,7 @@ def _build_structure(r: DeviceRecipe) -> str:
             continue
         lines.append(
             f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}：{m.name or ph('材料名称')}，"
-            f"厚度为{val(m.thk, f'{m.name or \"材料\"}THK', ' nm')}；"
+            f"厚度为{val(m.thk, (m.name or '材料') + 'THK', ' nm')}；"
         ); idx += 1
 
     lines.append(
@@ -147,7 +147,7 @@ def _build_fabrication(r: DeviceRecipe) -> str:
         if m.role == "emitter":
             continue
         name = m.name or ph("材料名称")
-        thk  = val(m.thk, f"{m.name or '材料'}THK", " nm")
+        thk  = val(m.thk, (m.name or '材料') + 'THK', " nm")
         rate = ph("蒸镀速率Å/s")
         rl   = ROLE_LABELS.get(m.role, "")
 
