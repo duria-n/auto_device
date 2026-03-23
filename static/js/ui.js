@@ -200,7 +200,7 @@ function renderMats() {
   State.materials.forEach((mat, idx) => {
     const rl = ROLE_LABELS[mat.role] || mat.role;
     const rc = "r-" + mat.role;
-    const showRatio = mat.role === "host" || mat.role === "emitter";
+    const showRatio = ["host","sensitizer","emitter"].includes(mat.role);
     c.insertAdjacentHTML("beforeend", `
     <div class="mat-card" id="mc_${mat.id}">
       <div class="mat-card-hdr">
@@ -232,18 +232,47 @@ function renderMats() {
       </div>
     </div>`);
   });
+
+  // 层数统计提示
+  const total  = State.materials.length;
+  const hosts  = State.materials.filter(m => m.role === "host").length;
+  const sens   = State.materials.filter(m => m.role === "sensitizer").length;
+  const emits  = State.materials.filter(m => m.role === "emitter").length;
+  const hint   = document.getElementById("matCountHint");
+  if (hint) {
+    const eml_parts = [];
+    if (hosts) eml_parts.push(`${hosts} Host`);
+    if (sens)  eml_parts.push(`${sens} 敏化剂`);
+    if (emits) eml_parts.push(`${emits} Emitter`);
+    const eml_str = eml_parts.length ? eml_parts.join(" + ") : "无EML";
+    const warn = total < 5 ? ` &nbsp;<span class="warn-count">⚠ 建议至少5层</span>` : "";
+    hint.innerHTML = `共 <b>${total}</b> 层 &nbsp;|&nbsp; EML: <span class="eml-count">${eml_str}</span>${warn}`;
+  }
 }
 
 function updateMat(id, key, val) {
   const m = State.materials.find(m => m.id === id);
   if (m) m[key] = val;
 }
-function addMat() {
-  State.materials.push({ id: State.matIdCounter++, name:"", role:"etl", thk:"", ratio:"",
-    homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" });
+function addMat(role) {
+  const r = role || "emitter";
+  // EML 层默认按已有 EML 数量自动命名
+  const emlCount = State.materials.filter(m => ["host","sensitizer","emitter"].includes(m.role)).length;
+  const defaultRatio = r === "host" ? String(Math.max(0, 100 - emlCount * 5)) :
+                       r === "emitter" || r === "sensitizer" ? "5" : "";
+  State.materials.push({
+    id: State.matIdCounter++, name:"", role: r,
+    thk:"", ratio: defaultRatio,
+    homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:""
+  });
   renderMats();
 }
+
 function removeMat(id) {
+  if (State.materials.length <= 5) {
+    toast("至少保留 5 个功能层", true);
+    return;
+  }
   State.materials = State.materials.filter(m => m.id !== id);
   renderMats();
 }

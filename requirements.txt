@@ -26,3 +26,5 @@ requests==2.32.3        # ERNIE / 通用 HTTP
 # transformers>=4.40.0
 # accelerate>=0.30.0
 # torch>=2.0.0
+# 生产部署
+gunicorn==22.0.0

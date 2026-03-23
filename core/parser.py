@@ -5,7 +5,7 @@ import logging
 from typing import Any
 import pandas as pd
 from .models import DeviceRecipe, MaterialLayer
-from .constants import ROLE_ORDER
+from .constants import ROLE_ORDER, EML_ROLES
 
 logger = logging.getLogger(__name__)
 

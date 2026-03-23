@@ -204,7 +204,18 @@
           <div class="card-hdr">功能层材料 <span class="card-hint">阳极→阴极方向</span></div>
           <div class="card-body">
             <div id="matCards"></div>
-            <button class="btn-add" onclick="addMat()">＋ 添加功能层</button>
+            <div class="mat-add-bar">
+              <span class="mat-add-label">快速添加：</span>
+              <button class="btn-add-role" onclick="addMat('host')">＋Host</button>
+              <button class="btn-add-role eml" onclick="addMat('sensitizer')">＋敏化剂</button>
+              <button class="btn-add-role eml" onclick="addMat('emitter')">＋Emitter</button>
+              <button class="btn-add-role" onclick="addMat('htl')">＋HTL</button>
+              <button class="btn-add-role" onclick="addMat('etl')">＋ETL</button>
+              <button class="btn-add-role other" onclick="addMat('hil')">＋HIL</button>
+              <button class="btn-add-role other" onclick="addMat('ebl')">＋EBL</button>
+              <button class="btn-add-role other" onclick="addMat('hbl')">＋HBL</button>
+            </div>
+            <div class="mat-count-hint" id="matCountHint"></div>
           </div>
         </div>
 

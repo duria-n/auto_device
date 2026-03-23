@@ -38,10 +38,11 @@
 
 {% for m in recipe.materials %}
 【{{ loop.index }}】{{ m.id }} — {{ m.name if m.name else "（未命名）" }}
-  · 功能角色：{{ m.role }}
+  · 功能角色：{{ m.role }}{% if m.role in ["host","sensitizer","emitter"] %}（EML层）{% endif %}
+
   · 厚度：{% if m.thk %}{{ m.thk }} nm{% else %}【待补充:{{ m.id }}THK】{% endif %}
 
-{% if m.role in ["host", "emitter"] %}
+{% if m.role in ["host", "sensitizer", "emitter"] %}
   · 掺杂比例：{% if m.ratio %}{{ m.ratio }} wt%{% else %}【待补充:掺杂比例wt%】{% endif %}
 
 {% endif %}

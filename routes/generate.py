@@ -1,7 +1,7 @@
 """routes/generate.py — 器件例生成相关 API 路由"""
 from __future__ import annotations
 import io
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, current_app
 import pandas as pd
 
 from core.models import DeviceRecipe, MaterialLayer
@@ -14,7 +14,6 @@ bp = Blueprint("generate", __name__)
 
 
 def _llm_cfg_from_request(body: dict) -> LLMConfig | None:
-    """从请求体中提取 LLM 配置；若无 provider 或纯模板模式则返回 None。"""
     llm = body.get("llm", {})
     provider = llm.get("provider", "").strip().lower()
     if not provider:
@@ -28,30 +27,26 @@ def _llm_cfg_from_request(body: dict) -> LLMConfig | None:
         temperature = float(llm.get("temperature", 0.3)),
     )
 
-    # HuggingFace 专用字段
     if provider == "huggingface":
-        cfg.hf_cache_dir     = llm.get("hf_cache_dir",   "")
-        cfg.hf_device        = llm.get("hf_device",      "auto")
-        cfg.hf_torch_dtype   = llm.get("hf_torch_dtype", "auto")
-        cfg.hf_load_in_4bit  = bool(llm.get("hf_load_in_4bit",  False))
-        cfg.hf_load_in_8bit  = bool(llm.get("hf_load_in_8bit",  False))
-        cfg.hf_token         = llm.get("hf_token", "")
-        cfg.hf_max_new_tokens= int(llm.get("hf_max_new_tokens", 2048))
-        # HF 不需要 api_key，但 model 字段就是 model_id
+        cfg.hf_cache_dir      = llm.get("hf_cache_dir",      "")
+        cfg.hf_device         = llm.get("hf_device",         "auto")
+        cfg.hf_torch_dtype    = llm.get("hf_torch_dtype",    "auto")
+        cfg.hf_load_in_4bit   = bool(llm.get("hf_load_in_4bit",  False))
+        cfg.hf_load_in_8bit   = bool(llm.get("hf_load_in_8bit",  False))
+        cfg.hf_token          = llm.get("hf_token",          "")
+        cfg.hf_max_new_tokens = int(llm.get("hf_max_new_tokens", 2048))
         if not cfg.model:
             return None
-
     elif not cfg.api_key:
-        return None   # 非HF模式必须有 api_key
+        return None
 
     return cfg
 
 
 def _recipe_from_body(body: dict) -> DeviceRecipe:
-    """将前端 JSON 转为 DeviceRecipe（手动输入模式）。"""
     data = body.get("data", {})
     mats = [MaterialLayer.from_dict(m) for m in data.get("materials", [])]
-    recipe = DeviceRecipe(
+    return DeviceRecipe(
         device_no   = data.get("device_no", "实施例1"),
         substrate   = data.get("substrate", "玻璃基板"),
         anode       = data.get("anode", "ITO"),
@@ -78,12 +73,18 @@ def _recipe_from_body(body: dict) -> DeviceRecipe:
         lmax        = data.get("lmax", ""),
         materials   = mats,
     )
-    return recipe
 
 
 # ── 单条生成 ──────────────────────────────────────────────────────────
 @bp.route("/api/generate", methods=["POST"])
 def api_generate():
+    sem = getattr(current_app, "job_semaphore", None)
+    acquired = sem.acquire(blocking=False) if sem else True
+    if not acquired:
+        return jsonify({
+            "success": False,
+            "error": f"服务器繁忙，当前并发任务已满，请稍后重试"
+        }), 503
     try:
         body     = request.get_json(force=True)
         sections = body.get("sections", DEFAULT_SECTIONS)
@@ -94,17 +95,26 @@ def api_generate():
         return jsonify({"success": True, "text": text, "mode": mode})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if sem and acquired:
+            sem.release()
 
 
 # ── CSV 批量生成 ───────────────────────────────────────────────────────
 @bp.route("/api/batch", methods=["POST"])
 def api_batch():
+    sem = getattr(current_app, "job_semaphore", None)
+    acquired = sem.acquire(blocking=False) if sem else True
+    if not acquired:
+        return jsonify({
+            "success": False,
+            "error": "服务器繁忙，请稍后重试"
+        }), 503
     try:
         sections_str = request.form.get("sections", "")
         sections     = sections_str.split(",") if sections_str else DEFAULT_SECTIONS
         mode         = request.form.get("mode", "template")
 
-        # LLM 配置从 form 字段读取
         llm_cfg = None
         api_key = request.form.get("api_key", "").strip()
         if api_key:
@@ -112,8 +122,7 @@ def api_batch():
                 provider    = request.form.get("provider", "openai"),
                 model       = request.form.get("model", "gpt-4o"),
                 api_key     = api_key,
-                secret_key  = request.form.get("secret_key", ""),
-                max_tokens  = int(request.form.get("max_tokens", 4096)),
+                max_tokens  = int(request.form.get("max_tokens", 2048)),
                 temperature = float(request.form.get("temperature", 0.3)),
             )
 
@@ -138,6 +147,9 @@ def api_batch():
         return jsonify({"success": True, "results": results, "total": len(results)})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        if sem and acquired:
+            sem.release()
 
 
 # ── 导出 TXT ──────────────────────────────────────────────────────────
@@ -156,27 +168,55 @@ def api_export_txt():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-# ── 下载 CSV 模板 ─────────────────────────────────────────────────────
+def _make_csv_header(n_bp: int) -> str:
+    """生成 n_bp 个功能层的 CSV 表头字符串。"""
+    base = "device_no,substrate,anode,anode_thk,cathode,cathode_thk"
+    bp_fields = ",".join(
+        f"BP{i}_name,BP{i}_role,BP{i}THK,"
+        f"BP{i}_HOMO,BP{i}_LUMO,BP{i}_S1,BP{i}_T1,"
+        f"BP{i}_f,BP{i}_Dipole,BP{i}_Lambda_hole,BP{i}_Lambda_electron,BP{i}_ratio"
+        for i in range(1, n_bp + 1)
+    )
+    perf = "Von,Vop,Vth,EQE,CdA,CIEx,CIEy,EL_peak,T95,Lmax"
+    return f"{base},{bp_fields},{perf}\n"
+
+
+def _make_csv_example_row(n_bp: int) -> str:
+    """生成一行示例数据（仅前几层有值，其余留空）。"""
+    defaults = {
+        1: ("HATCN",  "hil",        "10",  "-9.6","-5.5","","","","","","",""),
+        2: ("NPB",    "htl",        "40",  "-5.4","-2.4","","","","","","",""),
+        3: ("MADN",   "host",       "30",  "-5.9","-2.7","","","","","","","97"),
+        4: ("DSA-ph", "emitter",    "",    "-5.4","-2.5","2.90","2.62","0.92","3.1","0.15","0.18","3"),
+        5: ("Liq",    "etl",        "30",  "-2.0","-0.8","","","","","","",""),
+    }
+    row = "实施例1,玻璃基板,ITO,150,Al,"
+    for i in range(1, n_bp + 1):
+        if i in defaults:
+            row += ",".join(defaults[i]) + ","
+        else:
+            row += ",,,,,,,,,,," + ","   # 空列
+    row = row.rstrip(",")
+    row += ",,,,,,,,,,"   # 性能列
+    return row + "\n"
+
+
+# ── 下载 CSV 模板（支持指定层数）────────────────────────────────────
 @bp.route("/api/sample_csv")
 def api_sample_csv():
-    sample = (
-        "device_no,substrate,anode,anode_thk,cathode,cathode_thk,"
-        "BP1_name,BP1_role,BP1THK,BP1_HOMO,BP1_LUMO,BP1_S1,BP1_T1,"
-        "BP1_f,BP1_Dipole,BP1_Lambda_hole,BP1_Lambda_electron,BP1_ratio,"
-        "BP2_name,BP2_role,BP2THK,BP2_HOMO,BP2_LUMO,BP2_S1,BP2_T1,"
-        "BP2_f,BP2_Dipole,BP2_Lambda_hole,BP2_Lambda_electron,BP2_ratio,"
-        "BP3_name,BP3_role,BP3THK,BP3_HOMO,BP3_LUMO,BP3_S1,BP3_T1,"
-        "BP3_f,BP3_Dipole,BP3_Lambda_hole,BP3_Lambda_electron,BP3_ratio,"
-        "BP4_name,BP4_role,BP4THK,BP4_HOMO,BP4_LUMO,BP4_S1,BP4_T1,"
-        "BP4_f,BP4_Dipole,BP4_Lambda_hole,BP4_Lambda_electron,BP4_ratio,"
-        "Von,Vop,Vth,EQE,CdA,CIEx,CIEy,EL_peak,T95,Lmax\n"
-        "实施例1,玻璃基板,ITO,150,Al,,HATCN,hil,10,-9.6,-5.5,,,,,,,,"
-        "NPB,htl,40,-5.4,-2.4,,,,,,,,MADN,host,30,-5.9,-2.7,,,,,,,97,"
-        "DSA-ph,emitter,,−5.4,-2.5,2.90,2.62,0.92,3.1,0.15,0.18,3,"
-        ",,,,,,,,,,\n"
-    )
-    buf = io.BytesIO(sample.encode("utf-8-sig"))
+    """下载 CSV 模板，默认 5 层，可通过 ?n=N 指定层数。"""
+    try:
+        n = int(request.args.get("n", 5))
+        n = max(1, min(n, 30))   # 限制 1~30 层
+    except (ValueError, TypeError):
+        n = 5
+
+    header  = _make_csv_header(n)
+    example = _make_csv_example_row(n)
+    content = header + example
+
+    buf = io.BytesIO(content.encode("utf-8-sig"))
     buf.seek(0)
     return send_file(buf, as_attachment=True,
-                     download_name="OLED器件例模板.csv",
+                     download_name=f"OLED器件例模板_{n}层.csv",
                      mimetype="text/csv; charset=utf-8-sig")

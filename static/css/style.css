@@ -216,6 +216,7 @@ select option { background: var(--surface2); }
 .r-htl     { background: rgba(56,189,248,.12);  color:var(--accent); border:1px solid rgba(56,189,248,.25); }
 .r-ebl     { background: rgba(167,139,250,.12); color:#c4b5fd; border:1px solid rgba(167,139,250,.25); }
 .r-host    { background: rgba(251,146,60,.12);  color:var(--orange); border:1px solid rgba(251,146,60,.25); }
+.r-sensitizer { background: rgba(250,204,21,.12); color:#fde047; border:1px solid rgba(250,204,21,.25); }
 .r-emitter { background: rgba(52,211,153,.12);  color:var(--green);  border:1px solid rgba(52,211,153,.25); }
 .r-hbl     { background: rgba(167,139,250,.12); color:#c4b5fd; border:1px solid rgba(167,139,250,.25); }
 .r-etl     { background: rgba(129,140,248,.12); color:var(--accent2);border:1px solid rgba(129,140,248,.25); }
@@ -501,3 +502,33 @@ select option { background: var(--surface2); }
 .hf-status.warn    { background: rgba(251,146,60,.1);   border: 1px solid rgba(251,146,60,.3);  color: var(--orange); }
 .hf-status.err     { background: rgba(248,113,113,.1);  border: 1px solid rgba(248,113,113,.3); color: var(--red);    }
 .hf-status.loading { background: rgba(56,189,248,.1);   border: 1px solid rgba(56,189,248,.3);  color: var(--accent); }
+
+/* ── 功能层快速添加栏 ───────────────────────────────────────────── */
+.mat-add-bar {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 5px; margin-top: 6px;
+}
+.mat-add-label {
+  font-family: var(--mono); font-size: 9px;
+  color: var(--text-dim); letter-spacing: 0.5px; flex-shrink: 0;
+}
+.btn-add-role {
+  padding: 4px 9px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--mono); font-size: 10px;
+  cursor: pointer; transition: all .15s;
+}
+.btn-add-role:hover           { border-color: var(--accent);  color: var(--accent);  background: rgba(56,189,248,.06); }
+.btn-add-role.eml:hover       { border-color: var(--green);   color: var(--green);   background: rgba(52,211,153,.06); }
+.btn-add-role.other:hover     { border-color: var(--accent2); color: var(--accent2); background: rgba(129,140,248,.06); }
+
+.mat-count-hint {
+  font-family: var(--mono); font-size: 9px;
+  color: var(--text-dim); margin-top: 4px;
+  letter-spacing: 0.5px;
+}
+.mat-count-hint .eml-count { color: var(--green); font-weight: 500; }
+.mat-count-hint .warn-count { color: var(--orange); }

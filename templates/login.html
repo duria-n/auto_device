@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OLED器件例生成器 — 访问验证</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap');
+  :root {
+    --bg: #0b0f18; --surface: #111827; --border: #1f2d42;
+    --accent: #38bdf8; --accent2: #818cf8;
+    --text: #cbd5e1; --text-dim: #4b5e7a; --text-hi: #f1f5f9;
+    --red: #f87171; --mono: 'IBM Plex Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(56,189,248,.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56,189,248,.025) 1px, transparent 1px);
+    background-size: 44px 44px;
+    pointer-events: none;
+  }
+  .card {
+    position: relative; z-index: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 40px 36px;
+    width: 360px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .logo {
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 500; color: #000;
+    margin: 0 auto 20px;
+  }
+  h1 {
+    font-size: 15px; font-weight: 500;
+    color: var(--text-hi); text-align: center;
+    margin-bottom: 6px; letter-spacing: 0.5px;
+  }
+  .sub {
+    font-size: 10px; color: var(--text-dim);
+    text-align: center; margin-bottom: 28px;
+    letter-spacing: 1px; text-transform: uppercase;
+  }
+  label { font-size: 10px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+  input[type=text], input[type=password] {
+    width: 100%; margin-top: 6px; margin-bottom: 16px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px;
+    color: var(--text-hi); font-family: var(--mono); font-size: 14px;
+    outline: none; transition: border-color .18s; letter-spacing: 2px;
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(56,189,248,.08); }
+  button {
+    width: 100%; padding: 11px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; border-radius: 7px; color: #000;
+    font-family: var(--mono); font-weight: 500; font-size: 13px;
+    cursor: pointer; letter-spacing: 1px; transition: opacity .18s;
+  }
+  button:hover { opacity: .88; }
+  .error {
+    background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.3);
+    border-radius: 5px; padding: 8px 12px; margin-bottom: 14px;
+    color: var(--red); font-size: 11px; text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">OLED</div>
+  <h1>OLED器件例专利生成器</h1>
+  <div class="sub">请输入访问码以继续</div>
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+  <form method="POST" action="/login">
+    <label for="code">访问码</label>
+    <input type="password" id="code" name="code" placeholder="••••••••" autofocus autocomplete="off">
+    <button type="submit">进入系统 →</button>
+  </form>
+</div>
+</body>
+</html>

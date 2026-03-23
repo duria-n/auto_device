@@ -1,8 +1,7 @@
 """core/template_engine.py — 纯规则模板引擎（不调用 LLM）"""
 from __future__ import annotations
-import math
-from .models import DeviceRecipe, MaterialLayer
-from .constants import ROLE_LABELS, ROLE_ORDER, TADF_THRESHOLD
+from .models import DeviceRecipe, MaterialLayer, EMLConfig
+from .constants import ROLE_LABELS, ROLE_ORDER, EML_ROLES, TADF_THRESHOLD
 
 
 # ── 占位符 ────────────────────────────────────────────────────────────
@@ -11,12 +10,11 @@ def ph(label: str) -> str:
 
 
 def val(v: str, label: str, unit: str = "") -> str:
-    return f"{v}{unit}" if v.strip() else ph(label)
+    return f"{v}{unit}" if (v and v.strip()) else ph(label)
 
 
 # ── 机制判断 ──────────────────────────────────────────────────────────
 def detect_mechanism(s1: str, t1: str) -> tuple[str, float | None]:
-    """返回 ('TADF'|'conventional'|'unknown', delta|None)"""
     try:
         delta = abs(float(s1) - float(t1))
         return ("TADF" if delta < TADF_THRESHOLD else "conventional", round(delta, 3))
@@ -32,64 +30,159 @@ def _role_idx(role: str) -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# EML 描述构建（支持所有体系类型）
+# ══════════════════════════════════════════════════════════════════════
+
+def _fmt_ratio(m: MaterialLayer) -> str:
+    return f"{m.ratio} wt%" if m.ratio else ph(f"{m.name or m.id}掺杂比例wt%")
+
+
+def _eml_host_str(hosts: list[MaterialLayer]) -> str:
+    """格式化主体材料描述，支持单主体和多主体。"""
+    if not hosts:
+        return ""
+    if len(hosts) == 1:
+        h = hosts[0]
+        return f"以{h.name or ph('Host名称')}（{_fmt_ratio(h)}）为主体材料"
+    parts = "、".join(
+        f"{h.name or ph(f'Host{i+1}名称')}（{_fmt_ratio(h)}）"
+        for i, h in enumerate(hosts)
+    )
+    return f"以{parts}为{'双' if len(hosts)==2 else '多元'}主体材料"
+
+
+def _eml_dopant_str(
+    sensitizers: list[MaterialLayer],
+    emitters: list[MaterialLayer],
+) -> str:
+    """格式化掺杂组分描述（敏化剂 + 发光体），全部遍历。"""
+    parts = []
+    for i, s in enumerate(sensitizers):
+        label = "敏化剂" if len(sensitizers) == 1 else f"敏化剂{i+1} "
+        parts.append(f"{label}{s.name or ph(f'Sensitizer{i+1}名称')}（{_fmt_ratio(s)}）")
+    for i, e in enumerate(emitters):
+        label = "发光体" if len(emitters) == 1 else f"发光体{i+1} "
+        parts.append(f"{label}{e.name or ph(f'Emitter{i+1}名称')}（{_fmt_ratio(e)}）")
+    return "、".join(parts)
+
+
+def _eml_structure_line(eml: EMLConfig, idx: int) -> tuple[str, int]:
+    """
+    生成 EML 叠层结构描述行，完整遍历所有 hosts/sensitizers/emitters。
+    不截断任何组分，支持任意数量组合。
+    """
+    thk = val(eml.total_thk, "EML厚度/nm", " nm")
+    t   = eml.system_type
+
+    if t == "neat":
+        if len(eml.emitters) == 1:
+            e = eml.emitters[0]
+            desc = f"发光层（EML）：{e.name or ph('Emitter名称')}，厚度为{thk}；"
+        else:
+            parts = "、".join(
+                f"{e.name or ph(f'Emitter{i+1}名称')}（{_fmt_ratio(e)}）"
+                for i, e in enumerate(eml.emitters)
+            )
+            desc = f"发光层（EML）：{parts}共蒸发形成发光层，厚度为{thk}；"
+    else:
+        host_str   = _eml_host_str(eml.hosts)
+        dopant_str = _eml_dopant_str(eml.sensitizers, eml.emitters)
+        connector  = "，掺杂" if host_str and dopant_str else ""
+        suffix     = "，形成敏化型发光层" if eml.sensitizers else ""
+        desc = f"发光层（EML）：{host_str}{connector}{dopant_str}{suffix}，厚度为{thk}；"
+
+    return f"（{idx}）{desc}", idx + 1
+
+
+def _eml_fabrication_steps(eml: EMLConfig, step: int) -> tuple[list[str], int]:
+    """
+    生成 EML 制备工艺步骤，完整遍历所有组分。
+    """
+    thk  = val(eml.total_thk, "EML厚度/nm", " nm")
+    rate = ph("蒸镀速率Å/s")
+    t    = eml.system_type
+    lines = []
+
+    if t == "neat":
+        all_names = "、".join(
+            e.name or ph(f"Emitter{i+1}名称") for i, e in enumerate(eml.emitters)
+        )
+        lines.append(
+            f"（{step}）蒸镀{all_names}形成发光层，厚度{thk}，蒸镀速率{rate}；"
+        )
+    else:
+        # 所有组分汇总：hosts + sensitizers + emitters，全部参与共蒸发
+        host_parts = "、".join(
+            f"{h.name or ph(f'Host{i+1}名称')}（{_fmt_ratio(h)}）"
+            for i, h in enumerate(eml.hosts)
+        )
+        dopant_parts = _eml_dopant_str(eml.sensitizers, eml.emitters)
+
+        all_parts = "、".join(filter(None, [host_parts, dopant_parts]))
+        suffix = "敏化型" if eml.sensitizers else ("多元掺杂" if len(eml.emitters) > 1 else "")
+        lines.append(
+            f"（{step}）以{rate}速率共蒸发{all_parts}，"
+            f"形成{suffix}发光层，厚度{thk}；"
+        )
+
+    step += 1
+    return lines, step
+
+
+# ══════════════════════════════════════════════════════════════════════
 # 各段落生成函数
 # ══════════════════════════════════════════════════════════════════════
 
 def _build_structure(r: DeviceRecipe) -> str:
     lines = ["本实施例制备了一种有机电致发光器件，其叠层结构自下而上依次为：\n"]
     idx = 1
+    eml = r.get_eml_config()
 
     lines.append(f"（{idx}）基板：{r.substrate}；"); idx += 1
     lines.append(
-        f"（{idx}）阳极：{r.anode}，厚度为{val(r.anode_thk, 'ITO厚度/nm', ' nm')}；"
+        f"（{idx}）阳极：{r.anode}，"
+        f"厚度为{val(r.anode_thk, 'ITO厚度/nm', ' nm')}；"
     ); idx += 1
 
-    hosts    = r.get_hosts()
-    emitters = r.get_emitters()
-    non_eml  = r.get_non_eml()
+    non_eml = r.get_non_eml()
 
-    # HIL / HTL / EBL
+    # 阳极侧功能层（HIL / HTL / EBL）
     for m in non_eml:
         if _role_idx(m.role) >= _role_idx("host"):
             break
         lines.append(
-            f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}：{m.name or ph('材料名称')}，"
+            f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}："
+            f"{m.name or ph('材料名称')}，"
             f"厚度为{val(m.thk, (m.name or '材料') + 'THK', ' nm')}；"
         ); idx += 1
 
-    # EML
-    if hosts and emitters:
-        h, e = hosts[0], emitters[0]
-        lines.append(
-            f"（{idx}）发光层（EML）：以{h.name or ph('Host名称')}为主体材料，"
-            f"掺杂{e.name or ph('Emitter名称')}（掺杂浓度为{val(e.ratio, '掺杂浓度wt%', ' wt%')}），"
-            f"厚度为{val(h.thk or e.thk, 'EML厚度/nm', ' nm')}；"
-        ); idx += 1
-    elif emitters:
-        e = emitters[0]
-        lines.append(
-            f"（{idx}）发光层（EML）：{e.name or ph('Emitter名称')}，"
-            f"厚度为{val(e.thk, 'EML厚度/nm', ' nm')}；"
-        ); idx += 1
+    # EML（所有体系类型）
+    if not eml.is_empty:
+        eml_line, idx = _eml_structure_line(eml, idx)
+        lines.append(eml_line)
 
-    # HBL / ETL / EIL
+    # 阴极侧功能层（HBL / ETL / EIL）
     for m in non_eml:
         if _role_idx(m.role) <= _role_idx("emitter"):
             continue
         lines.append(
-            f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}：{m.name or ph('材料名称')}，"
+            f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}："
+            f"{m.name or ph('材料名称')}，"
             f"厚度为{val(m.thk, (m.name or '材料') + 'THK', ' nm')}；"
         ); idx += 1
 
     lines.append(
-        f"（{idx}）阴极：{r.cathode}，厚度为{val(r.cathode_thk, '金属阴极厚度/nm', ' nm')}。"
+        f"（{idx}）阴极：{r.cathode}，"
+        f"厚度为{val(r.cathode_thk, '金属阴极厚度/nm', ' nm')}。"
     )
     return "\n".join(lines)
 
 
 def _build_material(r: DeviceRecipe) -> str:
     mech, delta = detect_mechanism(r.s1, r.t1)
+    eml = r.get_eml_config()
 
+    # 发光机制介绍
     if mech == "TADF":
         intro = (
             f"热活化延迟荧光（TADF）材料，其单重态（S₁）与三重态（T₁）"
@@ -107,20 +200,20 @@ def _build_material(r: DeviceRecipe) -> str:
     # 载流子传输评价
     try:
         lh, le = float(r.lambda_hole), float(r.lambda_elec)
-        if lh < le:
-            transport = "空穴传输特性优于电子传输特性，呈空穴型传输偏向"
-        elif le < lh:
-            transport = "电子传输特性优于空穴传输特性，呈电子型传输偏向"
-        else:
-            transport = "空穴与电子传输性能相当，具有双极性传输特性"
+        transport = (
+            "空穴传输特性优于电子传输特性，呈空穴型传输偏向" if lh < le else
+            "电子传输特性优于空穴传输特性，呈电子型传输偏向" if le < lh else
+            "空穴与电子传输性能相当，具有双极性传输特性"
+        )
     except (ValueError, TypeError):
         transport = ph("载流子传输特性评价")
 
     delta_str = f"，单三重态能级差ΔE_ST = {delta} eV" if delta is not None else ""
 
-    return "\n\n".join([
+    parts = [
         f"本实施例所用发光材料为{intro}。",
-        f"所述发光材料的最高占据分子轨道（HOMO）能级为{val(r.homo, 'HOMO能级', 'eV')}，"
+        f"所述发光材料的最高占据分子轨道（HOMO）能级为"
+        f"{val(r.homo, 'HOMO能级', 'eV')}，"
         f"最低未占据分子轨道（LUMO）能级为{val(r.lumo, 'LUMO能级', 'eV')}，"
         f"带隙Eg = {eg}。",
         f"最低单重激发态能级S₁为{val(r.s1, 'S1能级', 'eV')}，"
@@ -130,46 +223,84 @@ def _build_material(r: DeviceRecipe) -> str:
         f"空穴重组能λ_hole = {val(r.lambda_hole, 'λ_hole', 'eV')}，"
         f"电子重组能λ_electron = {val(r.lambda_elec, 'λ_electron', 'eV')}，"
         f"{transport}。",
-    ])
+    ]
+
+    # 多发光体：逐一描述各 Emitter 的能级
+    if len(eml.emitters) > 1:
+        emitter_descs = "；".join(
+            f"{e.name or ph(f'Emitter{i+1}名称')}"
+            f"（HOMO = {val(e.homo, f'E{i+1}-HOMO', 'eV')}，"
+            f"LUMO = {val(e.lumo, f'E{i+1}-LUMO', 'eV')}，"
+            f"S₁ = {val(e.s1, f'E{i+1}-S1', 'eV')}，"
+            f"T₁ = {val(e.t1, f'E{i+1}-T1', 'eV')}）"
+            for i, e in enumerate(eml.emitters)
+        )
+        parts.append(
+            f"本实施例采用多元发光体体系，各发光体能级分别为：{emitter_descs}；"
+            f"多组分协同可实现{ph('颜色/光谱')}的宽谱发射。"
+        )
+
+    # 多主体：描述双主体体系的能级匹配
+    if len(eml.hosts) > 1:
+        host_descs = "；".join(
+            f"{h.name or ph(f'Host{i+1}名称')}"
+            f"（HOMO = {val(h.homo, f'H{i+1}-HOMO', 'eV')}，"
+            f"LUMO = {val(h.lumo, f'H{i+1}-LUMO', 'eV')}）"
+            for i, h in enumerate(eml.hosts)
+        )
+        parts.append(
+            f"发光层采用{'双' if len(eml.hosts)==2 else '多元'}主体体系："
+            f"{host_descs}；"
+            f"多主体结构可有效平衡载流子注入，拓宽激子复合区域。"
+        )
+
+    return "\n\n".join(parts)
 
 
 def _build_fabrication(r: DeviceRecipe) -> str:
     lines = [
-        f"将{r.substrate}上预镀有{r.anode}薄膜（厚度{val(r.anode_thk, 'ITO厚度/nm', ' nm')}）"
+        f"将{r.substrate}上预镀有{r.anode}薄膜"
+        f"（厚度{val(r.anode_thk, 'ITO厚度/nm', ' nm')}）"
         f"的基板经清洗及{ph('表面处理方式')}处理{ph('处理时间/min')}分钟后，"
-        f"置于真空蒸镀系统（本底真空度优于{ph('真空度/Pa')}），依次蒸镀各功能层：\n"
+        f"置于真空蒸镀系统（本底真空度优于{ph('真空度/Pa')}），"
+        f"依次蒸镀各功能层：\n"
     ]
-    step = 1
-    hosts    = r.get_hosts()
-    emitters = r.get_emitters()
+    step  = 1
+    eml   = r.get_eml_config()
+    rate  = ph("蒸镀速率Å/s")
 
     for m in r.materials:
-        if m.role == "emitter":
-            continue
+        if m.role in EML_ROLES:
+            continue    # EML 整体处理，跳过单个层
         name = m.name or ph("材料名称")
         thk  = val(m.thk, (m.name or '材料') + 'THK', " nm")
-        rate = ph("蒸镀速率Å/s")
         rl   = ROLE_LABELS.get(m.role, "")
 
-        if m.role == "host" and emitters:
-            e = emitters[0]
-            ename = e.name or ph("Emitter名称")
-            ratio = val(e.ratio, "掺杂浓度wt%", " wt%")
-            eThk  = val(m.thk or e.thk, "EML厚度/nm", " nm")
-            lines.append(
-                f"（{step}）以{rate}速率共蒸发{name}与{ename}，"
-                f"掺杂浓度{ratio}，厚度{eThk}；"
-            )
-        else:
-            lines.append(f"（{step}）蒸镀{rl}{name}，厚度{thk}，蒸镀速率{rate}；")
+        # 在 host 之前插入 EML 步骤（只插入一次）
+        if _role_idx(m.role) > _role_idx("emitter") and not any(
+            "发光层" in l for l in lines
+        ):
+            eml_steps, step = _eml_fabrication_steps(eml, step)
+            lines.extend(eml_steps)
+
+        lines.append(
+            f"（{step}）蒸镀{rl}{name}，厚度{thk}，蒸镀速率{rate}；"
+        )
         step += 1
 
+    # 如果 EML 在所有非EML层之后（如 EML 是最后一个功能层），补充插入
+    if not any("发光层" in l for l in lines) and not eml.is_empty:
+        eml_steps, step = _eml_fabrication_steps(eml, step)
+        lines.extend(eml_steps)
+
     lines.append(
-        f"（{step}）蒸镀{r.cathode}阴极，厚度{val(r.cathode_thk, '金属阴极厚度/nm', ' nm')}；"
+        f"（{step}）蒸镀{r.cathode}阴极，"
+        f"厚度{val(r.cathode_thk, '金属阴极厚度/nm', ' nm')}；"
     )
     step += 1
     lines.append(
-        f"（{step}）在{ph('封装气氛（N₂/Ar）')}手套箱中封装，固化条件{ph('固化条件')}。"
+        f"（{step}）在{ph('封装气氛（N₂/Ar）')}手套箱中封装，"
+        f"固化条件{ph('固化条件')}。"
     )
     return "\n".join(lines)
 
@@ -200,7 +331,8 @@ def _build_mechanism(r: DeviceRecipe) -> str:
         return (
             f"理论计算结果表明，所述发光材料的单重态能级S₁（{s1s}）"
             f"与三重态能级T₁（{t1s}）之间的能级差ΔE_ST = {delta} eV，"
-            f"远小于0.3 eV的TADF判断阈值，表明该材料具有热活化延迟荧光（TADF）特性。\n\n"
+            f"远小于0.3 eV的TADF判断阈值，表明该材料具有热活化延迟荧光"
+            f"（TADF）特性。\n\n"
             f"在此发光机制下，三重态激子（T₁）可通过热活化反向系间窜越（RISC）"
             f"转化为单重态激子（S₁）后辐射发光，理论内量子效率可接近100%。\n\n"
             f"振子强度f = {fv}，表明该材料跃迁偶极矩{ph('强弱评价')}，"
@@ -221,7 +353,8 @@ def _build_comparison(r: DeviceRecipe) -> str:
         f"其余结构与制备方法与{r.device_no}相同，制备对比器件。\n\n"
         f"测试结果显示，对比例器件的外量子效率EQEmax为{ph('对比EQE/%')}，"
         f"启亮电压Von为{ph('对比Von')} V，寿命T95为{ph('对比T95')} h。\n\n"
-        f"与对比例相比，本{r.device_no}所用发光材料在保持{ph('颜色/光谱')}发光特性的同时，"
+        f"与对比例相比，本{r.device_no}所用发光材料在保持"
+        f"{ph('颜色/光谱')}发光特性的同时，"
         f"外量子效率提升约{ph('EQE提升比例')}%，寿命提升约{ph('寿命提升比例')}%，"
         f"充分证明了本发明所述{ph('技术特征')}的技术优势。"
     )

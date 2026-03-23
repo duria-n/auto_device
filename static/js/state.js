@@ -2,17 +2,18 @@
 "use strict";
 
 const ROLE_LABELS = {
-  hil:     "HIL 空穴注入层",
-  htl:     "HTL 空穴传输层",
-  ebl:     "EBL 电子阻挡层",
-  host:    "EML 主体材料",
-  emitter: "EML 发光体",
-  hbl:     "HBL 空穴阻挡层",
-  etl:     "ETL 电子传输层",
-  eil:     "EIL 电子注入层",
+  hil:        "HIL 空穴注入层",
+  htl:        "HTL 空穴传输层",
+  ebl:        "EBL 电子阻挡层",
+  host:       "EML 主体材料",
+  sensitizer: "EML 敏化剂",
+  emitter:    "EML 发光体",
+  hbl:        "HBL 空穴阻挡层",
+  etl:        "ETL 电子传输层",
+  eil:        "EIL 电子注入层",
 };
 
-const ROLE_ORDER = ["hil","htl","ebl","host","emitter","hbl","etl","eil"];
+const ROLE_ORDER = ["hil","htl","ebl","host","sensitizer","emitter","hbl","etl","eil"];
 
 const PROVIDER_MODELS = {
   openai:    ["gpt-4o","gpt-4o-mini","gpt-4-turbo","gpt-3.5-turbo"],
@@ -35,13 +36,13 @@ const State = {
     temperature: 0.3,
   },
 
-  // 功能层列表
+  // 功能层列表（默认最少 5 层：HIL/HTL/Host/Emitter/ETL）
   materials: [
-    { id: 1, name:"HATCN",  role:"hil",    thk:"10", ratio:"",  homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
-    { id: 2, name:"NPB",    role:"htl",    thk:"40", ratio:"",  homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
-    { id: 3, name:"",       role:"host",   thk:"30", ratio:"97",homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
-    { id: 4, name:"",       role:"emitter",thk:"",   ratio:"3", homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
-    { id: 5, name:"Liq",    role:"etl",    thk:"30", ratio:"",  homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
+    { id:1, name:"HATCN",  role:"hil",     thk:"10", ratio:"",  homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
+    { id:2, name:"NPB",    role:"htl",     thk:"40", ratio:"",  homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
+    { id:3, name:"",       role:"host",    thk:"30", ratio:"97",homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
+    { id:4, name:"",       role:"emitter", thk:"",   ratio:"3", homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
+    { id:5, name:"Liq",    role:"etl",     thk:"30", ratio:"",  homo:"", lumo:"", s1:"", t1:"", f:"", dipole:"", lambda_hole:"", lambda_elec:"" },
   ],
   matIdCounter: 6,
 
