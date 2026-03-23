@@ -146,10 +146,10 @@ def _build_structure(r: DeviceRecipe) -> str:
 
     non_eml = r.get_non_eml()
 
-    # 阳极侧功能层（HIL / HTL / EBL）
-    for m in non_eml:
-        if _role_idx(m.role) >= _role_idx("host"):
-            break
+    # 阳极侧：role_idx < host 的层（HIL / HTL / EBL）
+    # 用 filter 替代 break，不受未知 role 影响
+    anode_side = [m for m in non_eml if _role_idx(m.role) < _role_idx("host")]
+    for m in anode_side:
         lines.append(
             f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}："
             f"{m.name or ph('材料名称')}，"
@@ -161,12 +161,25 @@ def _build_structure(r: DeviceRecipe) -> str:
         eml_line, idx = _eml_structure_line(eml, idx)
         lines.append(eml_line)
 
-    # 阴极侧功能层（HBL / ETL / EIL）
-    for m in non_eml:
-        if _role_idx(m.role) <= _role_idx("emitter"):
-            continue
+    # 阴极侧：role_idx > emitter 的层（HBL / ETL / EIL）
+    cathode_side = [m for m in non_eml if _role_idx(m.role) > _role_idx("emitter")]
+    for m in cathode_side:
         lines.append(
             f"（{idx}）{ROLE_LABELS.get(m.role, m.role)}："
+            f"{m.name or ph('材料名称')}，"
+            f"厚度为{val(m.thk, (m.name or '材料') + 'THK', ' nm')}；"
+        ); idx += 1
+
+    # 未知 role 的层（容错：追加到末尾并标注）
+    unknown_side = [
+        m for m in non_eml
+        if not (_role_idx(m.role) < _role_idx("host") or
+                _role_idx(m.role) > _role_idx("emitter"))
+        and m.role not in EML_ROLES
+    ]
+    for m in unknown_side:
+        lines.append(
+            f"（{idx}）{ph(f'功能层角色/{m.role}')}："
             f"{m.name or ph('材料名称')}，"
             f"厚度为{val(m.thk, (m.name or '材料') + 'THK', ' nm')}；"
         ); idx += 1
@@ -265,31 +278,34 @@ def _build_fabrication(r: DeviceRecipe) -> str:
         f"置于真空蒸镀系统（本底真空度优于{ph('真空度/Pa')}），"
         f"依次蒸镀各功能层：\n"
     ]
-    step  = 1
-    eml   = r.get_eml_config()
-    rate  = ph("蒸镀速率Å/s")
+    step     = 1
+    eml      = r.get_eml_config()
+    rate     = ph("蒸镀速率Å/s")
+    eml_done = False   # ← 标志位：EML 步骤是否已插入，替代字符串匹配
 
+    # 按层序遍历非 EML 层，在正确位置插入 EML 步骤
+    # 正确位置 = 第一个"阴极侧"功能层（role_idx > emitter）出现之前
     for m in r.materials:
         if m.role in EML_ROLES:
-            continue    # EML 整体处理，跳过单个层
+            continue   # EML 层整体处理，单个跳过
+
+        # 当前层已到阴极侧（HBL/ETL/EIL），且 EML 尚未插入 → 先插 EML
+        if not eml_done and _role_idx(m.role) > _role_idx("emitter"):
+            if not eml.is_empty:
+                eml_steps, step = _eml_fabrication_steps(eml, step)
+                lines.extend(eml_steps)
+            eml_done = True
+
         name = m.name or ph("材料名称")
         thk  = val(m.thk, (m.name or '材料') + 'THK', " nm")
         rl   = ROLE_LABELS.get(m.role, "")
-
-        # 在 host 之前插入 EML 步骤（只插入一次）
-        if _role_idx(m.role) > _role_idx("emitter") and not any(
-            "发光层" in l for l in lines
-        ):
-            eml_steps, step = _eml_fabrication_steps(eml, step)
-            lines.extend(eml_steps)
-
         lines.append(
             f"（{step}）蒸镀{rl}{name}，厚度{thk}，蒸镀速率{rate}；"
         )
         step += 1
 
-    # 如果 EML 在所有非EML层之后（如 EML 是最后一个功能层），补充插入
-    if not any("发光层" in l for l in lines) and not eml.is_empty:
+    # EML 在所有非 EML 层之后（无阴极侧层，或器件结构极简）→ 补充插入
+    if not eml_done and not eml.is_empty:
         eml_steps, step = _eml_fabrication_steps(eml, step)
         lines.extend(eml_steps)
 
@@ -346,18 +362,75 @@ def _build_mechanism(r: DeviceRecipe) -> str:
     )
 
 
-def _build_comparison(r: DeviceRecipe) -> str:
-    return (
-        f"对比例1\n\n"
-        f"除将发光层中的发光材料替换为{ph('对比材料名称')}外，"
-        f"其余结构与制备方法与{r.device_no}相同，制备对比器件。\n\n"
-        f"测试结果显示，对比例器件的外量子效率EQEmax为{ph('对比EQE/%')}，"
-        f"启亮电压Von为{ph('对比Von')} V，寿命T95为{ph('对比T95')} h。\n\n"
-        f"与对比例相比，本{r.device_no}所用发光材料在保持"
-        f"{ph('颜色/光谱')}发光特性的同时，"
-        f"外量子效率提升约{ph('EQE提升比例')}%，寿命提升约{ph('寿命提升比例')}%，"
-        f"充分证明了本发明所述{ph('技术特征')}的技术优势。"
-    )
+def _build_comparison(
+    r: DeviceRecipe,
+    comparisons: list[tuple["DeviceRecipe", str]] | None = None,
+) -> str:
+    """
+    生成对比例段落。
+
+    Parameters
+    ----------
+    r           : 原始实施例
+    comparisons : [(变体DeviceRecipe, 变更说明), ...] 列表
+                  为 None 时生成全占位符版本（旧行为，向后兼容）
+    """
+    if not comparisons:
+        # 无对比例数据，全占位符
+        change_ph = ph("变更说明（如：将发光层中的发光材料替换为XXX）")
+        return (
+            f"对比例1\n\n"
+            f"除{change_ph}外，"
+            f"其余结构与制备方法与{r.device_no}相同，制备对比器件。\n\n"
+            f"测试结果显示，对比例器件的外量子效率EQEmax为{ph('对比EQE/%')}，"
+            f"启亮电压Von为{ph('对比Von')} V，寿命T95为{ph('对比T95')} h。\n\n"
+            f"与对比例相比，本{r.device_no}所用材料在保持"
+            f"{ph('颜色/光谱')}发光特性的同时，"
+            f"外量子效率提升约{ph('EQE提升比例')}%，寿命提升约{ph('寿命提升比例')}%，"
+            f"充分证明了本发明所述{ph('技术特征')}的技术优势。"
+        )
+
+    blocks = []
+    for variant, change_desc in comparisons:
+        comp_no = variant.device_no   # 如 "对比例1"
+
+        # 生成对比例的结构描述（只生成叠层结构段）
+        comp_structure = _build_structure(variant)
+
+        # 对比数据（有实测值则用，否则占位符）
+        eqe_comp = val(variant.eqe, "对比EQE/%", "%")
+        von_comp = val(variant.von, "对比Von", " V")
+        t95_comp = val(variant.t95, "对比T95", " h")
+
+        # 提升比例（有实测数据时可计算）
+        eqe_improvement = ph("EQE提升比例")
+        t95_improvement = ph("寿命提升比例")
+        try:
+            if r.eqe and variant.eqe:
+                imp = round((float(r.eqe) - float(variant.eqe)) / float(variant.eqe) * 100, 1)
+                eqe_improvement = str(imp)
+        except (ValueError, TypeError):
+            pass
+        try:
+            if r.t95 and variant.t95:
+                imp = round((float(r.t95) - float(variant.t95)) / float(variant.t95) * 100, 1)
+                t95_improvement = str(imp)
+        except (ValueError, TypeError):
+            pass
+
+        block = (
+            f"{comp_no}\n\n"
+            f"{change_desc}，其余结构与制备方法与{r.device_no}相同，制备对比器件。\n\n"
+            f"对比器件叠层结构如下：\n\n{comp_structure}\n\n"
+            f"测试结果显示，{comp_no}器件的外量子效率EQEmax为{eqe_comp}，"
+            f"启亮电压Von为{von_comp}，寿命T95为{t95_comp}。\n\n"
+            f"与{comp_no}相比，本{r.device_no}的外量子效率提升约{eqe_improvement}%，"
+            f"寿命提升约{t95_improvement}%，"
+            f"充分证明了本发明所述{ph('技术特征')}的技术优势。"
+        )
+        blocks.append(block)
+
+    return "\n\n".join(blocks)
 
 
 # ── 段落分发表 ────────────────────────────────────────────────────────
@@ -367,16 +440,35 @@ _SECTION_BUILDERS = {
     "fabrication": ("③ 器件制备方法描述", _build_fabrication),
     "performance": ("④ 器件性能数据记述", _build_performance),
     "mechanism":   ("⑤ 发光机制分析说明", _build_mechanism),
-    "comparison":  ("⑥ 与对比例效果对比", _build_comparison),
+    "comparison":  ("⑥ 与对比例效果对比", None),  # 特殊处理，见 generate_text
 }
 
 
-def generate_text(recipe: DeviceRecipe, sections: list[str]) -> str:
-    """模板引擎入口：返回纯文本（含占位符）"""
+def generate_text(
+    recipe: DeviceRecipe,
+    sections: list[str],
+    comparisons: list[tuple[DeviceRecipe, str]] | None = None,
+) -> str:
+    """
+    模板引擎入口：返回纯文本（含占位符）。
+
+    Parameters
+    ----------
+    recipe      : 主实施例配方
+    sections    : 要生成的段落列表
+    comparisons : 对比例列表，每项为 (变体配方, 变更说明)
+                  由 ComparisonStrategy.xxx() 生成
+                  为 None 时对比例段落全部使用占位符
+    """
     parts = [recipe.device_no]
     for sec in sections:
         if sec not in _SECTION_BUILDERS:
             continue
-        title, builder = _SECTION_BUILDERS[sec]
-        parts.append(f"{title}\n\n{builder(recipe)}")
+        if sec == "comparison":
+            title = "⑥ 与对比例效果对比"
+            content = _build_comparison(recipe, comparisons)
+        else:
+            title, builder = _SECTION_BUILDERS[sec]
+            content = builder(recipe)
+        parts.append(f"{title}\n\n{content}")
     return "\n\n".join(parts)

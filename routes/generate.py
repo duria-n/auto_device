@@ -43,7 +43,63 @@ def _llm_cfg_from_request(body: dict) -> LLMConfig | None:
     return cfg
 
 
-def _recipe_from_body(body: dict) -> DeviceRecipe:
+def _comparisons_from_body(body: dict, recipe: DeviceRecipe):
+    """
+    从请求体解析对比例配置，返回 [(变体, 变更说明), ...] 或 None。
+
+    前端传入格式：
+    "comparisons": [
+        {
+            "strategy": "replace_emitter",  // replace_emitter|replace_host|change_ratio|remove_layer
+            "new_name": "CBP",              // strategy=replace_emitter/replace_host 时的新材料名
+            "new_ratio": "5",               // strategy=change_ratio 时的新掺杂比例
+            "role": "ebl",                  // strategy=remove_layer 时的目标角色
+        },
+        ...
+    ]
+    """
+    from core.models import ComparisonStrategy
+    raw = body.get("comparisons")
+    if not raw:
+        return None
+
+    results = []
+    for i, cfg in enumerate(raw, 1):
+        strategy = cfg.get("strategy", "replace_emitter")
+        try:
+            if strategy == "replace_emitter":
+                variant, desc = ComparisonStrategy.replace_emitter(
+                    recipe,
+                    new_name  = cfg.get("new_name", ""),
+                    new_homo  = cfg.get("new_homo", ""),
+                    new_lumo  = cfg.get("new_lumo", ""),
+                    comp_no   = i,
+                )
+            elif strategy == "replace_host":
+                variant, desc = ComparisonStrategy.replace_host(
+                    recipe,
+                    new_name = cfg.get("new_name", ""),
+                    comp_no  = i,
+                )
+            elif strategy == "change_ratio":
+                variant, desc = ComparisonStrategy.change_dopant_ratio(
+                    recipe,
+                    new_ratio = cfg.get("new_ratio", "5"),
+                    comp_no   = i,
+                )
+            elif strategy == "remove_layer":
+                variant, desc = ComparisonStrategy.remove_layer(
+                    recipe,
+                    role    = cfg.get("role", "ebl"),
+                    comp_no = i,
+                )
+            else:
+                continue
+            results.append((variant, desc))
+        except Exception:
+            continue
+
+    return results if results else None
     data = body.get("data", {})
     mats = [MaterialLayer.from_dict(m) for m in data.get("materials", [])]
     return DeviceRecipe(
@@ -83,7 +139,7 @@ def api_generate():
     if not acquired:
         return jsonify({
             "success": False,
-            "error": f"服务器繁忙，当前并发任务已满，请稍后重试"
+            "error": "服务器繁忙，当前并发任务已满，请稍后重试"
         }), 503
     try:
         body     = request.get_json(force=True)
@@ -91,7 +147,11 @@ def api_generate():
         mode     = body.get("mode", "template")
         recipe   = _recipe_from_body(body)
         llm_cfg  = _llm_cfg_from_request(body)
-        text     = generate(recipe, sections, llm_cfg, mode)
+
+        # ── 对比例配置解析 ─────────────────────────────────────────────
+        comparisons = _comparisons_from_body(body, recipe)
+
+        text = generate(recipe, sections, llm_cfg, mode, comparisons)
         return jsonify({"success": True, "text": text, "mode": mode})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

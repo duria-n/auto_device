@@ -147,3 +147,98 @@ class DeviceRecipe:
             sensitizers = self.get_sensitizers(),
             emitters    = self.get_emitters(),
         )
+
+
+# ── 对比例变体策略 ────────────────────────────────────────────────────
+import copy as _copy
+
+
+class ComparisonStrategy:
+    """
+    对比例变体生成策略集合。
+    每个策略接收原始 DeviceRecipe，返回 (变体 DeviceRecipe, 变更说明)。
+
+    用法：
+        variant, desc = ComparisonStrategy.replace_emitter(recipe, new_name="CBP")
+        text = generate_text(variant, sections)
+    """
+
+    @staticmethod
+    def replace_emitter(
+        recipe: "DeviceRecipe",
+        new_name: str = "",
+        new_homo: str = "",
+        new_lumo: str = "",
+        comp_no: int = 1,
+    ) -> tuple["DeviceRecipe", str]:
+        """策略A：替换发光体（最常用）。"""
+        v = _copy.deepcopy(recipe)
+        v.device_no = f"对比例{comp_no}"
+        old_names = [m.name for m in v.materials if m.role == "emitter"]
+        for m in v.materials:
+            if m.role == "emitter":
+                m.name  = new_name or f"对比发光材料{comp_no}"
+                m.homo  = new_homo
+                m.lumo  = new_lumo
+                m.s1 = m.t1 = m.f = m.dipole = m.lambda_hole = m.lambda_elec = ""
+        # 清空顶层量化参数（来自旧 emitter）
+        v.homo = new_homo; v.lumo = new_lumo
+        v.s1 = v.t1 = v.f = v.dipole = v.lambda_hole = v.lambda_elec = ""
+        old_str = "、".join(old_names) if old_names else "原发光材料"
+        new_str = new_name or f"对比发光材料{comp_no}"
+        return v, f"将发光层中的发光材料由{old_str}替换为{new_str}"
+
+    @staticmethod
+    def replace_host(
+        recipe: "DeviceRecipe",
+        new_name: str = "",
+        comp_no: int = 1,
+    ) -> tuple["DeviceRecipe", str]:
+        """策略B：替换主体材料。"""
+        v = _copy.deepcopy(recipe)
+        v.device_no = f"对比例{comp_no}"
+        old_names = [m.name for m in v.materials if m.role == "host"]
+        for m in v.materials:
+            if m.role == "host":
+                m.name = new_name or f"对比主体材料{comp_no}"
+                m.homo = m.lumo = ""
+        old_str = "、".join(old_names) if old_names else "原主体材料"
+        new_str = new_name or f"对比主体材料{comp_no}"
+        return v, f"将发光层主体材料由{old_str}替换为{new_str}"
+
+    @staticmethod
+    def change_dopant_ratio(
+        recipe: "DeviceRecipe",
+        new_ratio: str,
+        comp_no: int = 1,
+    ) -> tuple["DeviceRecipe", str]:
+        """策略C：改变发光体掺杂比例。"""
+        v = _copy.deepcopy(recipe)
+        v.device_no = f"对比例{comp_no}"
+        old_ratios = [m.ratio for m in v.materials if m.role == "emitter" and m.ratio]
+        for m in v.materials:
+            if m.role == "emitter":
+                m.ratio = new_ratio
+            elif m.role == "host":
+                try:
+                    m.ratio = str(round(100 - float(new_ratio), 1))
+                except ValueError:
+                    pass
+        old_str = "、".join(old_ratios) if old_ratios else "原比例"
+        return v, f"将发光体掺杂浓度由{old_str} wt%调整为{new_ratio} wt%"
+
+    @staticmethod
+    def remove_layer(
+        recipe: "DeviceRecipe",
+        role: str,
+        comp_no: int = 1,
+    ) -> tuple["DeviceRecipe", str]:
+        """策略D：去除某功能层（如去除 EBL / HIL）。"""
+        from .constants import ROLE_LABELS
+        v = _copy.deepcopy(recipe)
+        v.device_no = f"对比例{comp_no}"
+        removed = [m.name for m in v.materials if m.role == role]
+        v.materials = [m for m in v.materials if m.role != role]
+        role_label = ROLE_LABELS.get(role, role)
+        removed_str = "、".join(removed) if removed else role_label
+        return v, f"去除{role_label}（{removed_str}）"
