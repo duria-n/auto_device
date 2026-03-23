@@ -270,57 +270,121 @@ def _build_material(r: DeviceRecipe) -> str:
     return "\n\n".join(parts)
 
 
+# def _build_fabrication(r: DeviceRecipe) -> str:
+#     lines = [
+#         f"将{r.substrate}上预镀有{r.anode}薄膜"
+#         f"（厚度{val(r.anode_thk, 'ITO厚度/nm', ' nm')}）"
+#         f"的基板经清洗及{ph('表面处理方式')}处理{ph('处理时间/min')}分钟后，"
+#         f"置于真空蒸镀系统（本底真空度优于{ph('真空度/Pa')}），"
+#         f"依次蒸镀各功能层：\n"
+#     ]
+#     step     = 1
+#     eml      = r.get_eml_config()
+#     rate     = ph("蒸镀速率Å/s")
+#     eml_done = False   # ← 标志位：EML 步骤是否已插入，替代字符串匹配
+
+#     # 按层序遍历非 EML 层，在正确位置插入 EML 步骤
+#     # 正确位置 = 第一个"阴极侧"功能层（role_idx > emitter）出现之前
+#     for m in r.materials:
+#         if m.role in EML_ROLES:
+#             continue   # EML 层整体处理，单个跳过
+
+#         # 当前层已到阴极侧（HBL/ETL/EIL），且 EML 尚未插入 → 先插 EML
+#         if not eml_done and _role_idx(m.role) > _role_idx("emitter"):
+#             if not eml.is_empty:
+#                 eml_steps, step = _eml_fabrication_steps(eml, step)
+#                 lines.extend(eml_steps)
+#             eml_done = True
+
+#         name = m.name or ph("材料名称")
+#         thk  = val(m.thk, (m.name or '材料') + 'THK', " nm")
+#         rl   = ROLE_LABELS.get(m.role, "")
+#         lines.append(
+#             f"（{step}）蒸镀{rl}{name}，厚度{thk}，蒸镀速率{rate}；"
+#         )
+#         step += 1
+
+#     # EML 在所有非 EML 层之后（无阴极侧层，或器件结构极简）→ 补充插入
+#     if not eml_done and not eml.is_empty:
+#         eml_steps, step = _eml_fabrication_steps(eml, step)
+#         lines.extend(eml_steps)
+
+#     lines.append(
+#         f"（{step}）蒸镀{r.cathode}阴极，"
+#         f"厚度{val(r.cathode_thk, '金属阴极厚度/nm', ' nm')}；"
+#     )
+#     step += 1
+#     lines.append(
+#         f"（{step}）在{ph('封装气氛（N₂/Ar）')}手套箱中封装，"
+#         f"固化条件{ph('固化条件')}。"
+#     )
+#     return "\n".join(lines)
+
 def _build_fabrication(r: DeviceRecipe) -> str:
     lines = [
-        f"将{r.substrate}上预镀有{r.anode}薄膜"
-        f"（厚度{val(r.anode_thk, 'ITO厚度/nm', ' nm')}）"
+        f"将{r.substrate}上预镀有{r.anode}薄膜（厚度{val(r.anode_thk, 'ITO厚度/nm', ' nm')}）"
         f"的基板经清洗及{ph('表面处理方式')}处理{ph('处理时间/min')}分钟后，"
-        f"置于真空蒸镀系统（本底真空度优于{ph('真空度/Pa')}），"
-        f"依次蒸镀各功能层：\n"
+        f"置于真空蒸镀系统（本底真空度优于{ph('真空度/Pa')}），依次蒸镀各功能层：\n"
     ]
-    step     = 1
-    eml      = r.get_eml_config()
-    rate     = ph("蒸镀速率Å/s")
-    eml_done = False   # ← 标志位：EML 步骤是否已插入，替代字符串匹配
+    step = 1
+    hosts    = r.get_hosts()
+    emitters = r.get_emitters()
 
-    # 按层序遍历非 EML 层，在正确位置插入 EML 步骤
-    # 正确位置 = 第一个"阴极侧"功能层（role_idx > emitter）出现之前
+    # [重构核心]: 使用显式标志位，彻底弃用极易误判的字符串匹配 (any("发光层" in l...))
+    eml_inserted = False 
+
     for m in r.materials:
-        if m.role in EML_ROLES:
-            continue   # EML 层整体处理，单个跳过
+        # ─── 1. 拦截并处理发光层 (Host / Emitter) ───
+        if m.role in ["host", "emitter"]:
+            if not eml_inserted:
+                # 首次遇到发光层材料，执行共蒸发逻辑
+                rate = ph("蒸镀速率Å/s")
+                
+                if hosts and emitters:
+                    h, e = hosts[0], emitters[0]
+                    h_name = h.name or ph("Host名称")
+                    e_name = e.name or ph("Emitter名称")
+                    ratio  = val(e.ratio, "掺杂浓度wt%", " wt%")
+                    e_thk  = val(h.thk or e.thk, "EML厚度/nm", " nm")
+                    
+                    lines.append(
+                        f"（{step}）以{rate}速率共蒸发{h_name}与{e_name}，"
+                        f"掺杂浓度{ratio}，厚度{e_thk}；"
+                    )
+                elif hosts:
+                    # 异常兼容：只有 Host 没有 Emitter
+                    h = hosts[0]
+                    lines.append(f"（{step}）蒸镀主体材料{h.name or ph('Host名称')}，厚度{val(h.thk, 'EML厚度', ' nm')}，蒸镀速率{rate}；")
+                elif emitters:
+                    # 异常兼容：只有 Emitter 没有 Host
+                    e = emitters[0]
+                    lines.append(f"（{step}）蒸镀发光体{e.name or ph('Emitter名称')}，厚度{val(e.thk, 'EML厚度', ' nm')}，蒸镀速率{rate}；")
+                
+                step += 1
+                eml_inserted = True
+                
+            # 只要是发光层组件，处理完后直接跳过后续的基础追加逻辑
+            continue 
 
-        # 当前层已到阴极侧（HBL/ETL/EIL），且 EML 尚未插入 → 先插 EML
-        if not eml_done and _role_idx(m.role) > _role_idx("emitter"):
-            if not eml.is_empty:
-                eml_steps, step = _eml_fabrication_steps(eml, step)
-                lines.extend(eml_steps)
-            eml_done = True
-
+        # ─── 2. 处理常规功能层 (HIL, HTL, ETL 等) ───
         name = m.name or ph("材料名称")
-        thk  = val(m.thk, (m.name or '材料') + 'THK', " nm")
+        thk  = val(m.thk, f"{m.name or '材料'}THK", " nm")
+        rate = ph("蒸镀速率Å/s")
         rl   = ROLE_LABELS.get(m.role, "")
-        lines.append(
-            f"（{step}）蒸镀{rl}{name}，厚度{thk}，蒸镀速率{rate}；"
-        )
+
+        lines.append(f"（{step}）蒸镀{rl}{name}，厚度{thk}，蒸镀速率{rate}；")
         step += 1
 
-    # EML 在所有非 EML 层之后（无阴极侧层，或器件结构极简）→ 补充插入
-    if not eml_done and not eml.is_empty:
-        eml_steps, step = _eml_fabrication_steps(eml, step)
-        lines.extend(eml_steps)
-
+    # ─── 3. 阴极与封装 ───
     lines.append(
-        f"（{step}）蒸镀{r.cathode}阴极，"
-        f"厚度{val(r.cathode_thk, '金属阴极厚度/nm', ' nm')}；"
+        f"（{step}）蒸镀{r.cathode}阴极，厚度{val(r.cathode_thk, '金属阴极厚度/nm', ' nm')}；"
     )
     step += 1
     lines.append(
-        f"（{step}）在{ph('封装气氛（N₂/Ar）')}手套箱中封装，"
-        f"固化条件{ph('固化条件')}。"
+        f"（{step}）在{ph('封装气氛（N₂/Ar）')}手套箱中封装，固化条件{ph('固化条件')}。"
     )
+    
     return "\n".join(lines)
-
-
 def _build_performance(r: DeviceRecipe) -> str:
     return "\n\n".join([
         "对所制备的器件进行电学及光学性能测试，结果如下：",
